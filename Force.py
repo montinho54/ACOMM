@@ -65,10 +65,10 @@ class Node:
         self.y = y
         self.z = z
        
-def calculate_el_volume(element_shell_node_indexes,node_coord,shell_strains_step,t):
+def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t):
     """
-    Erstellt ein pd.DataFrame in dem für jedes Element die zugehörigen Knoten-id's,
-    das jeweilige Elementvolumen [volume] und die Elementfläche [area] vorhanden sind
+    Berechnet das Volumen des gesamten Simulationskörpers indem jedes Elementvolumen berechnet wird
+    und anschließend über alle Elementvolumina aufsummiert wird
 
     Parameters
     ----------
@@ -85,12 +85,9 @@ def calculate_el_volume(element_shell_node_indexes,node_coord,shell_strains_step
 
     Returns
     -------
-    node_indexes : pd.Dataframe
-        shape:
-            (n_elements,6) bzw. (n_elements,5)
-        columns: 
-            wenn rechtecks-elemente vorliegen: id1,id2,id3,id4,volume,area,t
-            wenn dreiecks-elemente vorliegen: id1,id2,id3,volume,area,t
+    volume : float
+        Volumen des Simulationskörpers
+
 
     """
     #t kann auch über d3plot ermittelt werden:
@@ -174,13 +171,10 @@ def calculate_el_volume(element_shell_node_indexes,node_coord,shell_strains_step
             el_areas.append(a)
             el_volumes.append(el_volume)
             thicknesses.append(thickness)
-    
-    node_indexes = node_indexes.assign(volume=pd.Series(el_volumes).values)
-    node_indexes = node_indexes.assign(area=pd.Series(el_areas).values)
-    node_indexes = node_indexes.assign(t=pd.Series(thicknesses).values)
             
-        
-    return node_indexes
+            
+    volume = sum(el_volumes)    
+    return volume
     
     
 

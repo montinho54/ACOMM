@@ -34,7 +34,7 @@ class Wrapper:
         self.keyword_path = keyword_path
         self.element_type = element_type
         
-    def calc_stresses(self,strains,**kwargs):
+    def calc_stresses(self,strains,cm,**kwargs):
         """
         Ruft das um47shl Materialmodell als Wrapper auf
     
@@ -43,19 +43,24 @@ class Wrapper:
         strains : np.array mit shape = (steps,n_ips,6)
             Dehnungspfad für jede Dehnung in jedem Integrationspunkt (eps_xx,eps_yy,eps_zz,eps_xy,eps_yz,eps_zx)
             Häufig wird nur für einen Integrationspunkt gerechnet. Dann hat strains folgende Shape: (steps,1,6)
+        
+        cm : Liste mit Material Koeffizienten [Emod,nue,crv/table,eppf,eppfr,y0 = Fließspannung]
+            cm[0]                                   = Emod (E-Modul in Mpa)
+            cm[1]                                   = nue (Querkontraktionszahl)
+            cm[2]                                   = eppf (Float) effective plastic strain at which material softening begins (logaritmic strain)
+            cm[3]                                   = eppfr (Float) effective plastic strain at which material ruptures (logaritmic strain)  
+            cm[4]                                   = y0 (Fließspannung in Mpa)
+            cm[5]                                   = mid (Material ID)
+            cm[6]                                   = lcss (Loadcurve ID im Material)
               
         kwargs
         ------
         verbose : int
-            verbose = 0: keine Ausgabe 
-            verbose = 1: Ausgabe der verwendeten Materialkonstanten aus der Keyword-Datei (default)
+            verbose = 0: keine Ausgabe (default)
             verbose = 2: Ausgabe der verwendeten Materialkonstanten aus der Keyword-Datei 
                         + aktueller Status des Radial-Return Algorithmus innerhalb der Material-Subroutine 
 
-            
-        mid : int
-            Bestimmt welches Material (Material-ID) in der Keyword-Datein ausgewertet werden soll. 
-            Wenn kein mid übergeben wird, wird das erste Material in der Keyword-Datei ausgewertet 
+        
             
         Parameter, die in Zukunft hinzugefügt werden können:
         -----------------------------------------------------
@@ -84,22 +89,8 @@ class Wrapper:
             spos = True
             strains = strains.reshape(1,1,strains.shape[0])
         
-       
-        
-        if "mid" in kwargs:
-            mid = int(kwargs["mid"])
-            mid,i = read_material_constants(self.keyword_path,mid = mid)    
-        else:
-            mid,i = read_material_constants(self.keyword_path)  
-            
-        cm_dict = read_constants_from_keyword(self.keyword_path,first_constant = "mid", n_lines = 2, first_line_to_read = i)
-         
-        
-        keys = ["e","pr","eppf","eppfr","sigy","mid","lcss"]
-        global cm
-        cm = [cm_dict[key] for key in keys]
-        if verbose == 1:
-            print("Verwendete Keyworddatei: \n{} \n\nVerwendete Materialkonstanten: \n{}".format(self.keyword_path,cm_dict))
+
+    
     
         steps = np.shape(strains)[0] #number of steps
         n_ips = np.shape(strains)[1] #number of integration points 
@@ -678,7 +669,13 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
         if frs > 0.0: #ist der Fall, wenn eppfr > eppf ist
             dmg[i]=max(dmg[i],(epsps[i]-eppf)/frs)
         else:
-            dmg[i]=0.5+np.sign([0.5,epsps[i]-eppf])
+            #03.11. Fehler in der Implementierung
+            #FORTRAN: SIGN(A,B) returns the value of A with the sign of B.
+            #numpy: The sign function returns -1 if x < 0, 0 if x==0, 1 if x > 0. nan is returned for nan inputs.
+            #dmg[i]=0.5+np.sign([0.5,epsps[i]-eppf])
+            #aus diesem Grund wird die FORTRAN routine "sign" folgendermaßen umgangen
+            
+            dmg[i]=0.5+0.5*np.sign(epsps[i]-eppf)
         
         dmg[i]=min(0.99999,dmg[i])
         hsvs[i,0]=dmg[i] #hsv(1) = damage 
@@ -796,156 +793,9 @@ def read_lc_from_keyword(keyword_path,**kwargs):
     return lc_arr
 
 
-
-def read_material_constants(keyword_path, **kwargs):
-    """
-    Liest eine Keyworddatei ein und gibt die Zeile zurück, in der das erste Material abgelegt ist.
-    Wenn über kwargs: mid = x festgelegt wird, wird die Zeile zurückgegeben in der das Material mit der mid = x abgelegt ist.
-    
-    Parameters
-    ----------
-    keyword_path : string
-        Pfad der Keyword Datei, welche die Materialparameter enthält
-    **kwargs 
-    --------
-    mid : int
-        Material-ID, des Materials, das benutzt werden soll (bietet sich an, wenn mehrere Materialien in der Keyworddatei vorhanden sind)
-
-    Returns
-    -------
-    m : int
-        Material-ID des benutzten Materials
-    i : int
-        Erste Zeile in der Keyworddatei, wo das betroffende Material abgelegt ist
-
-    """
-    if "mid" in kwargs:
-        mid = kwargs["mid"]
-        
-    with open(keyword_path) as file:
-        lines = file.readlines()
-        lines = [line.rstrip() for line in lines]
-
-        for i,line in enumerate(lines):
-            if "*MAT_" in line and "TITLE" in line:
-                m = int(lines[i+3][:10])
-                if "mid" in locals():
-                    if mid == m:
-                        break
-                    else: 
-                        continue
-                else: 
-                    break
- 
-            elif "*MAT_" in line and "TITLE" not in line:
-                m = int(lines[i+2][:10])
-                if "mid" in locals():
-                    if mid == m:
-                        break
-                    else: 
-                        continue
-                else: 
-                    break
-    return m,i
-                
-            
-    
-def read_constants_from_keyword(keyword_path,first_constant = "mid", n_lines = 2, **kwargs): 
-    """
-    Liest eine Keyword-Datei ein und
-    generiert ein Dictionary in dem die betroffenden Parameter der Keyword-Datei gespeichert sind.
-
-    Parameters
-    ----------
-    keyword_path : string
-        Pfad der Keyword Datei
-    first_constant : string
-        Erster Parameter, der in der Keyworddatei ermittelt werden soll
-    lines : int
-        Anzahl der Zeilen, die für die Parameterbestimmung brücksichtigt werden soll
-    
-    kwargs
-    ------
-    line_of_first_constant : boolean
-        Bestimmt, ob die Zeile, der ersten Konstanten (Parameter "first_constant") zurückgegeben wird.
-        Falls angegeben und line_of_first_constant == True, dann wird die Zeile zurückgegeben
-        Wird in read_lc_from_keyword() genutzt
-        
-    first_line_to_read : int
-        Legt die erste Zeile fest, ab die eingelesen werden soll
-    
-
-    Returns
-    -------
-    cm_dict : dict
-        Dictionary, in dem alle notwendigen Materialkonstanten (cm) gespeichert sind
-
-    """
-    
-    
-    with open(keyword_path) as file:
-        all_lines = file.readlines()
-        all_lines = [line.rstrip() for line in all_lines]
-        
-        if "first_line_to_read" in kwargs:
-            first_line = kwargs["first_line_to_read"]
-        else:
-            first_line = 0
-        lines = all_lines[first_line:]
+               
             
         
-        const_length = len(first_constant)
-        for i,line in enumerate(lines):
-            for j in range(len(line)):
-                if line[j:j+const_length] == first_constant:
-                    a = i
-                    break
-            else:
-                continue
-            break
-        
-  
-        line = lines[a]
-        for i in range(2,2*n_lines,2):
-            
-            line = line + lines[a+i]
-
-        var = []
-        #Einträge in der Keyworddatei sind immer 10 Zeichen lang
-        for i in range(10,int(len(line))+10,10):
-            for j in range(1,11):
-
-                if line[i-j-1] == " ":      
-                    var.append(line[i-j:i])
-                    break
-                elif j == 10:
-                    var.append(line[i-j:i])
-                    break
-                
-        line = lines[a+1]
-        
-        for i in range(2,2*n_lines,2):
-            
-            line = line + lines[a+1+i]
-            
-        val = []
-        for i in range(10,int(len(line))+10,10):
-            for j in range(1,11):
-
-                if line[i-j-1] == " ":      
-                    val.append(float(line[i-j:i]))
-                    break
-                elif j == 10:
-                    val.append(float(line[i-j:i]))
-                    break
-                
-        cm_dict = dict(zip(var, val))
-    
-    if "line_of_first_constant" in kwargs and kwargs["line_of_first_constant"] == True:
-        return cm_dict,a+first_line
-    else:
-        return cm_dict
-    
 
 def crvval(crv,xval):
     """
@@ -1067,7 +917,8 @@ def get_sigy_hard(keyword_path,xval):
         Steigung der loadcurve an xval (im FORTRAN Code: hard[i])
 
     """
-        
+    #ursprüngliche Version
+    """
     mid = int(cm[5])
 
     mid,i = read_material_constants(keyword_path, mid = mid)
@@ -1084,5 +935,7 @@ def get_sigy_hard(keyword_path,xval):
 
     crv= read_lc_from_keyword(keyword_path,first_line_to_read = i, sfa = sfa, sfo = sfo, offa = offa, offo = offo)
     yval,slope = crvval(crv,xval)
-    
+    """
+    yval = 0.02
+    slope = 0.0
     return yval, slope          

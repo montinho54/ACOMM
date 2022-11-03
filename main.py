@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 
 import os
 import mat
-
+import Force as force
 
 
 #material = "T45"
@@ -22,18 +22,39 @@ keyword_path = os.path.join(pfad,"model.k")
 mat_shl = mat.Wrapper(keyword_path,"shl")
 mat_sld = mat.Wrapper(keyword_path,"sld")
 
-
+first_step = 0
+last_step = 40
 #BINOUT
 binout = Binout(binout_path)
 
 #D3PLOT
 d3plot = D3plot(d3plot_path,buffered_reading=True)
+displacement_dir = "x"
+exact_force = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))
+
+
+#Koordinaten aller Knoten im unbelasteten Zustad, shape: (Anzhal knoten, 3) x,y,z
+node_coordinates = d3plot.arrays[ArrayType.node_coordinates]
+#Koordinaten aller Knoten zu allen Zeitschritten, shape: (Anzhal knoten, 3) x,y,z
+node_displacement = d3plot.arrays[ArrayType.node_displacement]
+
+u= force.displacement(node_coordinates,node_displacement,boundary = displacement_dir)
+du = np.gradient(u)
 
 
 stresses = d3plot.arrays[ArrayType.element_shell_stress][:,:,0,:]           
 #: shape (n_states, n_shells_non_rigid, n_shell_layers, xx_yy_zz_xy_yz_xz) -> stresses unterscheiden seich nicht in z dimension, da ESZ)
 strains = d3plot.arrays[ArrayType.element_shell_strain][:,:,0,:]            
 #: shape (n_states, n_shells_non_rigid, upper_lower, xx_yy_zz_xy_yz_xz)  -> strains unterscheiden seich nicht in z dimension, da ESZ)
+
+t0 = d3plot.arrays[ArrayType.element_shell_thickness][0]
+node_coord_0 = node_displacement[0,:,:]
+eps_0 = strains[0,:,:]
+node_indexes = d3plot.arrays[ArrayType.element_shell_node_indexes]
+
+#volumen des gesamtenprobekörpers
+volume0 = force.calculate_volume(node_indexes,node_coord_0,eps_0,t0)
+
 
 """
 stresses = d3plot.arrays[ArrayType.element_solid_stress]
@@ -45,9 +66,12 @@ strains = d3plot.arrays[ArrayType.element_solid_strain][:,:,0,:]
 
 #Single-element-Simulation
 
-
-sigmas = mat_shl.calc_stresses(strains,verbose = 2)*1000
+cm = [2.1,0.38,10e03,10e03,1,1,1]
+sigmas = mat_shl.calc_stresses(strains,cm,verbose = 2)*1000
 #sigmas = mat_sld.calc_stresses(strains,verbose = False)*1000
+
+
+
 
 element = 0
 
