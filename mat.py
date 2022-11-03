@@ -361,8 +361,14 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
         i=int(isav[ii])
         if frs > 0.0: #ist der Fall, wenn eppfr > eppf ist
             dmg[i]=max(dmg[i],(epsps[i]-eppf)/frs)
-        else:
-            dmg[i]=0.5+np.sign([0.5,epsps[i]-eppf])
+        else:           
+            #03.11. Fehler in der Implementierung
+            #FORTRAN: SIGN(A,B) returns the value of A with the sign of B.
+            #numpy: The sign function returns -1 if x < 0, 0 if x==0, 1 if x > 0. nan is returned for nan inputs.
+            #dmg[i]=0.5+np.sign([0.5,epsps[i]-eppf])
+            #aus diesem Grund wird die FORTRAN routine "sign" folgendermaßen umgangen
+            
+            dmg[i]=0.5+0.5*np.sign(epsps[i]-eppf)
         
         dmg[i]=min(0.99999,dmg[i])
         hsvs[i,0]=dmg[i] #hsv(1) = damage 
