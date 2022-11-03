@@ -11,7 +11,9 @@ import Force as force
 material = "T65"
 
 #Laden der Validierungssimulaitonen
+MZ_folder = r"/MZ_AIMM_korrekt_t65_lcid3_lc_mit_setzen_1860el_elast"
 pfad = os.path.abspath(os.getcwd()+ "/../Simulations/MAT81_" + material + "_shl")
+pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder)
 
 
 d3plot_path = os.path.join(pfad,"d3plot")
@@ -52,7 +54,7 @@ node_coord_0 = node_displacement[0,:,:]
 eps_0 = strains[0,:,:]
 node_indexes = d3plot.arrays[ArrayType.element_shell_node_indexes]
 
-#volumen des gesamtenprobekörpers
+#volumen des gesamten Probekörpers
 volume0 = force.calculate_volume(node_indexes,node_coord_0,eps_0,t0)
 
 
@@ -66,8 +68,8 @@ strains = d3plot.arrays[ArrayType.element_solid_strain][:,:,0,:]
 
 #Single-element-Simulation
 
-cm = [2.1,0.38,10e03,10e03,1,1,1]
-sigmas = mat_shl.calc_stresses(strains,cm,verbose = 2)*1000
+cm = [2.45,0.38,10e03,10e03,1,1,1]
+sigmas = mat_shl.calc_stresses(strains,cm,verbose = False)*1000
 #sigmas = mat_sld.calc_stresses(strains,verbose = False)*1000
 
 
