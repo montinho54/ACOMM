@@ -9,7 +9,7 @@ import numpy as np
 import pandas as pd
 
 
-def calc_dW_in(sigma,d_eps,ip_volumes):
+def calc_dW_in(sigma,d_eps,volume):
     """
     Berechnet die differentielle innere Energie (Formänderungsenergie dW_in) im Körper, 
     basierend auf folgender Gleichung: dW_in = volumen_integral(d_eps:sigma)
@@ -21,18 +21,16 @@ def calc_dW_in(sigma,d_eps,ip_volumes):
     d_eps : np.array(), shape: (n_ip,6)
         Differentielle Dehnungen im aktuellen Zeitschritt 
         (wird über zentrale Differenzen aus vorherigen und nächsten Zeitschritt realisiert) (xx,yy,zz,xy,yz,zx)     
-    ip_volumes : pd.Dataframe
+    volume : float
+        Gemitteltes Elementvolumen (es werden bewusst nicht die einzelnen Elementvolumen berücksichtigt, wie ursprünglich
+                                         da die Spannungen über alle Elemente gemittelt werden)
         berechnet mittels:  
-            force.calculate_el_volume(self.node_indexes,node_displacement,eps,self.t)
-        shape:
-            (n_elements,6) bzw. (n_elements,5)
-        columns: 
-            wenn rechtecks-elemente vorliegen: id1,id2,id3,id4,volume,area
-            wenn dreiecks-elemente vorliegen: id1,id2,id3,volume,area
+            force.calculate_volume(node_indexes,node_coord_0,eps_0,t0)
+   
 
     Returns
     -------
-    dW_in : float
+    dW_in_vol : float
         Differentielle innere Energie (Formänderungsenergie)
 
     """
@@ -52,9 +50,11 @@ def calc_dW_in(sigma,d_eps,ip_volumes):
         #sigma:d_eps = Tensorkontraktion, wird mit Skalarprodukt über jede Zeile realisiert
         p = np.dot(strain_line,stress_line)   
   
-        dW_in = dW_in + ip_volumes.loc[i,"volume"]*p
-
-    return dW_in
+        dW_in = dW_in + p
+        
+    #Multiplizieren mit dem gemittelten Probenvolumen pro Element
+    dW_in_vol = dW_in*volume
+    return dW_in_vol
     
     
 
@@ -86,7 +86,7 @@ def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t)
     Returns
     -------
     volume : float
-        Volumen des Simulationskörpers
+        Mittelwert der Elementvolumen
 
 
     """
@@ -173,7 +173,7 @@ def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t)
             thicknesses.append(thickness)
             
             
-    volume = sum(el_volumes)    
+    volume = np.mean(el_volumes)    
     return volume
     
     
