@@ -1,6 +1,7 @@
 from lasso.dyna import D3plot, ArrayType,Binout
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 
 import os
 import mat
@@ -78,76 +79,18 @@ stresses = stresses[:last_step,:,:] #GPa
 sigmas = mat_shl.calc_stresses(strains,cm,verbose = False) #GPa
 #sigmas = mat_sld.calc_stresses(strains,verbose = False)
 
-"""
-Kraftberechnung
-"""
-
-"""
-correct_F,calc_F = [],[]
-u= force.displacement(node_coordinates,node_displacement,boundary = displacement_dir)
-for step in range(22):
-
-    du = np.gradient(u)[step]
-    
-    correct_F.append(np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))[step])
-    
-    d_eps = np.gradient(strains,axis = 0)[step,:,:]
-    sigmas_force = np.copy(sigmas[step,:,:]) #GPa
-    dW_in = force.calc_dW_in(sigmas_force,d_eps,volume0)
-    calc_F.append(dW_in/du) #kN
-    cF = np.array(calc_F[1:])
-    coF = np.array(correct_F[1:])
-    ratio = cF/coF
-"""
 
 
-
-
-def hook_numpy(d, em, rn):
+def F_x(eps,u,force,volume, E, nu):
     """  
     Spannungsberechnung für eine elastische Deformation nach dem Hooke'schen Gesetz
-    Materialmodell (hook_numpy) erwartet Gleitungen:
-    [eps_11,eps_22,eps_33, 2*eps_12, 2*eps_23, 2*eps_31]
+
+    [eps_11,eps_22,eps_33, eps_12, eps_23, eps_31]
     
     Parameters
     ----------
-    d : np.array, shape: (n_ip,6)
-        Dehnungen an jedem Integrationspunkt
-    em : float
-        E-Modul
-    rn : float
-        Querkontraktionszahl
-
-    Returns
-    -------
-    s : np.array, shape: (n_ip,6)
-        
-
-    """
-    s = np.zeros(d.shape)
-    
-    d_gleitungen = np.copy(d)
-    d_gleitungen[:,3:] = 2*np.copy(d_gleitungen[:,3:])
-
-    gm = em / (2.0*(1.0+rn))
-    bk = em / (3.0*(1.0-2.0*rn))
-    ev = (np.sum(d_gleitungen[:,:3], axis=1)/3.0).reshape([d_gleitungen.shape[0],1])
-    evv = np.concatenate([ev,ev,ev],1)
-
-    s[:,:3] = 3.0*bk*evv + 2.0 *gm*(d_gleitungen[:,:3]-evv)
-    s[:,3:] = gm *d_gleitungen[:,3:]
-    return s
-
-def F_x(eps,u,force,volume, E, rn):
-    """  
-    Spannungsberechnung für eine elastische Deformation nach dem Hooke'schen Gesetz
-    Materialmodell (hook_numpy) erwartet Gleitungen:
-    [eps_11,eps_22,eps_33, 2*eps_12, 2*eps_23, 2*eps_31]
-    
-    Parameters
-    ----------
-    eps : np.array, shape: (2,n_ip,6)
-        Dehnungen an jedem Integrationspunkt, der ersten zwei Zeitschritte
+    eps : np.array, shape: (n_states,n_ip,6)
+        Dehnungen an jedem Integrationspunkt, aller Zeitschritte
         
     u : np.array(), shape: (2,1)
         Verschiebungen der ersten zwei Zeitschritte
@@ -156,188 +99,176 @@ def F_x(eps,u,force,volume, E, rn):
         gemessene Kraft der ersten zwei Zeitschritte
     
     volume : float
-        MW des Elementvolumens
+        Mittelwert der Elementvolumina
         
     E : float
         E-Modul
-    rn : float
+    nu : float
         Querkontraktionszahl
 
     Returns
     -------
-    s : np.array, shape: (n_ip,6)
+    Func : np.array, shape: (2,)
+        Funktion für das Newton-Verfahren
         
     """
       
-    #d_gleitungen = np.copy(eps)
-    eps[:,:,3:] = 2*np.copy(eps[:,:,3:])
-    eps_1 = eps[1,:,:]
-    eps_2 = eps[2,:,:]
+    #bestimmen des Elastizitätstensors C
+    C_11 = E*(1-nu)/((1+nu)*(1-2*nu))
+    C_12 = E*nu/((1+nu)*(1-2*nu))
+    C_44 = E*(1-2*nu)/((1+nu)*(1-2*nu))
+    C = np.zeros([6,6])
+    C[:3,:3] = C_12
+    C[0,0],C[1,1],C[2,2] = C_11,C_11,C_11
+    C[3,3],C[4,4],C[5,5] = C_44,C_44,C_44
     
-    sig_1 = np.zeros(eps_1.shape)
-    sig_2 = np.zeros(eps_2.shape)
     
-    #Spannungsberechnung
-    gm = E / (2.0*(1.0+rn))
-    bk = E / (3.0*(1.0-2.0*rn))
-    
-    #berechnen von sig_1
-    ev = (np.sum(eps_1[:,:3], axis=1)/3.0).reshape([eps_1.shape[0],1])
-    evv = np.concatenate([ev,ev,ev],1)
-
-    sig_1[:,:3] = 3.0*bk*evv + 2.0 *gm*(eps_1[:,:3]-evv)
-    sig_1[:,3:] = gm *eps_1[:,3:]
-    
-    #berechnen von sig_2
-    ev = (np.sum(eps_2[:,:3], axis=1)/3.0).reshape([eps_2.shape[0],1])
-    evv = np.concatenate([ev,ev,ev],1)
-
-    sig_2[:,:3] = 3.0*bk*evv + 2.0 *gm*(eps_2[:,:3]-evv)
-    sig_2[:,3:] = gm *eps_2[:,3:]
- 
-    
-    d_eps = np.gradient(strains,axis = 0)[:,:,:]
-    d_eps_1 = d_eps[1,:,:]
-    d_eps_2 = d_eps[2,:,:]
-    
+    d_eps = np.gradient(eps,axis = 0)[:,:,:]
     du = np.gradient(u)
-    du_1 = du[1]
-    du_2 = du[2]
     
-    p = np.zeros(eps_1.shape[0])
-    for i in range(eps_1.shape[0]):
-        p[i] = np.dot(sig_1[i,:],d_eps_1[i,:])
-    F_1 = volume*np.sum(p)-force[1]*du_1
+    Func = np.zeros(2)
     
-    p = np.zeros(eps_2.shape[0])
-    for i in range(eps_2.shape[0]):
-        p[i] = np.dot(sig_2[i,:],d_eps_2[i,:])
-    F_2 = volume*np.sum(p)-force[2]*du_2
+    for j,t in enumerate([1,2]):
+    
+        summe = 0
+        for i in range(eps.shape[1]):
+            summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
+        Func[j] =  summe - du[t]*force[t]
 
-    F = np.array([F_1,F_2])
-    return F
+    return Func
 
-def jacobian(eps ,u,volume, E, rn):
-    """  
-    Berechnet die Jacobimatrix für das mehrdimensionale Newtonverfahren zur Ermittlung von em und rn
-    Spannungsberechnung für eine elastische Deformation nach dem Hooke'schen Gesetz
-    Materialmodell (hook_numpy) erwartet Gleitungen:
-    [eps_11,eps_22,eps_33, 2*eps_12, 2*eps_23, 2*eps_31]
-    
+def dF_dE(eps,volume,E,nu,t):
+    """
+    Ableitung der Funktion F (Quasistatische Energiebilanz) nach dem E-Modul
+
     Parameters
     ----------
-    eps : np.array(), shape: (2,n_ip,6)
-        Dehnungen der ersten zwei Zeitschritte (xx,yy,zz,xy,yz,zx)
-        
-      
-    u :np.array(), shape: (2,1)
-        Verschiebungen der ersten zwei Zeitschritte
-    
+    eps : np.array, shape: (n_states,n_ip,6)
+        Dehnungen an jedem Integrationspunkt, aller Zeitschritte
     volume : float
-        MW des Elementvolumens
+        Mittelwert der Elementvolumina
     
     E : float
-        E-Modul
-    rn : float
-        Querkontraktionszahl
+        E-Modul (wird durch das Newtonverfahren iterativ angepasst)
+    
+    nu : float
+        Querkontraktionszahl (wird durch das Newtonverfahren iterativ angepasst)
+        
+    t : int
+        timestep, entweder 1 oder 2
 
     Returns
     -------
-    J : np.array, shape: (2,2)
-        Jacobimatrix
-        
+    summe : float
+
     """
+    C_11 = (1-nu)/((1+nu)*(1-2*nu))
+    C_12 = nu/((1+nu)*(1-2*nu))
+    C_44 = (1-2*nu)/((1+nu)*(1-2*nu))
+    C = np.zeros([6,6])
+    C[:3,:3] = C_12
+    C[0,0],C[1,1],C[2,2] = C_11,C_11,C_11
+    C[3,3],C[4,4],C[5,5] = C_44,C_44,C_44
     
-    #d_gleitungen = np.copy(eps)
-    eps[:,:,3:] = 2*np.copy(eps[:,:,3:])
-    eps_1 = eps[1,:,:]
-    eps_2 = eps[2,:,:]
+    d_eps = np.gradient(eps,axis = 0)[:,:,:]
     
-    d_eps = np.gradient(strains,axis = 0)[:,:,:]
-    d_eps_1 = d_eps[1,:,:]
-    d_eps_2 = d_eps[2,:,:]
+    summe = 0
+    for i in range(eps.shape[1]):
+        summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
     
-    du = np.gradient(u)
-    du_1 = du[1]
-    du_2 = du[2]
-    
-    #Ableitungen des Schubmoduls gm und des Kompressionsmoduls bk nach den gesuchten Größen (E und rn)
+    return summe
 
-    dgm_dE = 1 / (2.0*(1.0+rn))
-    dbk_dE = 1 / (3.0*(1.0-2.0*rn))
+def dF_dnu(eps,volume,E,nu,t):
+    """
+    Ableitung der Funktion F (Quasistatische Energiebilanz) nach der Querkontraktionszahl
+
+    Parameters
+    ----------
+    eps : np.array, shape: (n_states,n_ip,6)
+        Dehnungen an jedem Integrationspunkt, aller Zeitschritte
+    volume : float
+        Mittelwert der Elementvolumina
     
-    dgm_drn = E / (2.0*(1.0+rn)**2)
-    dbk_drn = 2*E / (3.0*(1.0-2.0*rn)**2)
+    E : float
+        E-Modul (wird durch das Newtonverfahren iterativ angepasst)
+    
+    nu : float
+        Querkontraktionszahl (wird durch das Newtonverfahren iterativ angepasst)
         
-    ev_1 = (np.sum(eps_1[:,:3], axis=1)/3.0).reshape([eps_1.shape[0],1])
-    evv_1 = np.concatenate([ev_1,ev_1,ev_1],1)
-    
-    ev_2 = (np.sum(eps_2[:,:3], axis=1)/3.0).reshape([eps_2.shape[0],1])
-    evv_2 = np.concatenate([ev_2,ev_2,ev_2],1)
-    
-    dsig1_dE, dsig2_dE, dsig1_drn, dsig2_drn = np.zeros(d_eps_1.shape),np.zeros(d_eps_1.shape),np.zeros(d_eps_1.shape),np.zeros(d_eps_1.shape)
+    t : int
+        timestep, entweder 1 oder 2
 
+    Returns
+    -------
+    summe : float
 
-    dsig1_dE[:,:3] = 3.0*dbk_dE*evv_1 + 2.0 *dgm_dE*(eps_1[:,:3]-evv_1)
-    dsig1_dE[:,3:] = dgm_dE *eps_1[:,3:]
-    dF1_dE = np.zeros(len(dsig1_dE))
-    for i in range(len(dF1_dE)):
-        dF1_dE[i] = np.dot(dsig1_dE[i,:],d_eps_1[i,:])
-    dF1_dE = volume*np.sum(dF1_dE)
+    """
+    C_11 = -2*(nu-2)*nu/(2*nu**2+nu-1)**2
+    C_12 = (2*nu**2+1)/(2*nu**2+nu-1)**2
+    C_44 = -1/(1+nu)**2
+    C = np.zeros([6,6])
+    C[:3,:3] = C_12
+    C[0,0],C[1,1],C[2,2] = C_11,C_11,C_11
+    C[3,3],C[4,4],C[5,5] = C_44,C_44,C_44
     
-    dsig2_dE[:,:3] = 3.0*dbk_dE*evv_2 + 2.0 *dgm_dE*(eps_2[:,:3]-evv_2)
-    dsig2_dE[:,3:] = dgm_dE *eps_2[:,3:]
-    dF2_dE = np.zeros(len(dsig1_dE))
-    for i in range(len(dF2_dE)):
-        dF2_dE[i] = np.dot(dsig2_dE[i,:],d_eps_2[i,:])
-    dF2_dE = volume*np.sum(dF2_dE)
+    d_eps = np.gradient(eps,axis = 0)[:,:,:]
     
-    dsig1_drn[:,:3] = 3.0*dbk_drn*evv_1 + 2.0 *dgm_drn*(eps_1[:,:3]-evv_1)
-    dsig1_drn[:,3:] = dgm_drn *eps_1[:,3:]
-    dF1_drn = np.zeros(len(dsig1_dE))
-    for i in range(len(dF1_drn)):
-        dF1_drn[i] = np.dot(dsig1_drn[i,:],d_eps_1[i,:])
-    dF1_drn = volume*np.sum(dF1_drn)
+    summe = 0
+    for i in range(eps.shape[1]):
+        summe = summe + volume*np.dot(E*C@eps[t,i,:],d_eps[t,i,:])
     
-    dsig2_drn[:,:3] = 3.0*dbk_drn*evv_2 + 2.0 *dgm_drn*(eps_2[:,:3]-evv_2)
-    dsig2_drn[:,3:] = dgm_drn *eps_2[:,3:]
-    dF2_drn = np.zeros(len(dsig1_dE))
-    for i in range(len(dF2_drn)):
-        dF2_drn[i] = np.dot(dsig2_drn[i,:],d_eps_2[i,:])
-    dF2_drn = volume*np.sum(dF2_drn)
+    return summe
     
-    
-    J = np.array([[dF1_dE,dF1_drn],[dF2_dE,dF2_drn]])
-    
-    return J
+
 
 
 u= force.displacement(node_coordinates,node_displacement,boundary = displacement_dir)
-correct_F = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))
-E_start = 5
-rn_start = 0.2
+correct_force = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))*1000
+E_start = 1*1000 #korrekt: 2.45
+rn_start = 0.45 #korrekt: 0.38
 x = np.array([E_start,rn_start])
 
 
-F = F_x(strains,u,correct_F,volume0, x[0], x[1])
-J = jacobian(strains ,u,volume0, x[0], x[1])
-
-delta_x = -np.linalg.inv(J)@F
-x = x + delta_x
-norm = []
-norm.append(np.linalg.norm(delta_x))
 i = 0
+"""
+#1Dim Newton
+while True:
+    F = F_x(strains,u,correct_force,volume0, x[0], x[1])[0]-0.012352254229967219
+    F= F_x(strains,u,correct_force,volume0, x[0], x[1])[1]-0.029571290757218982
+    #F_strich = dF_dE(strains,volume0,x[0],x[1],1)
+    F_strich = dF_dnu(strains,volume0,x[0],x[1],2)
 
-while np.linalg.norm(delta_x) > 5:
-    F = F_x(strains,u,correct_F,volume0, x[0], x[1])
-    J = jacobian(strains ,u,volume0, x[0], x[1])
+    delta_x = -F/F_strich
+    
+    #x[0] = x[0] + delta_x
+    x[1] = x[1] + delta_x
+    print("Iteration: {} F: {:3.10f} E: {:3.4f} nue: {:3.10f} delta_x: {:3.10f}".format(i,F,x[0],x[1],delta_x))
+    i = i + 1
+    if abs(F) < 0.0000001:
+        break
+"""   
+
+#2Dim Newton
+while True:
+    F = np.zeros(2)
+    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1])[0]-0.012352254229967219 #korrektur term (abweichung aufgrund des durchschnittlichen EL. vols)
+    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1])[1]-0.029571290757218982
+    
+    J = np.zeros([2,2])
+    J[0,0] = dF_dE(strains,volume0,x[0],x[1],1)
+    J[1,0] = dF_dE(strains,volume0,x[0],x[1],2)
+
+    J[0,1] = dF_dnu(strains,volume0,x[0],x[1],1)
+    J[1,1] = dF_dnu(strains,volume0,x[0],x[1],2)
 
     delta_x = -np.linalg.inv(J)@F
-    
-    norm.append(np.linalg.norm(delta_x))
-    
     x = x + delta_x
-    print("Iteration: {} E: {:3.4f} nue: {:3.4f} norm: {:3.4f}".format(i,x[0],x[1],np.linalg.norm(delta_x)))
+  
+   
+    print("Iteration: {} F: {:3.10f},{:3.10f}  E: {:3.4f} nue: {:3.10f} delta_x: {:3.10f}, {:3.10f}".format(i,F[0],F[1],x[0],x[1],delta_x[0],delta_x[1]))
     i = i + 1
+    if abs(max(F)) < 0.0000001:
+        break
 
+    
 
