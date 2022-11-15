@@ -13,9 +13,12 @@ material = "T65"
 
 #Laden der Validierungssimulaitonen
 MZ_folder = r"/MZ_AIMM_korrekt_t65_lcid3_lc_mit_setzen_1860el_elast"
+MZ_folder_lager = r"/MZ_AIMM_korrekt_t65_lcid3_lc_mit_setzen_1860el_elast_opt_Lager"
+rechteck_folder = r"/MAT24_T65_shell_Rechtecksprobe_optimale_Lagerung"
 #pfad = os.path.abspath(os.getcwd()+ "/../Simulations/MAT81_" + material + "_shl")
-pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder)
-
+#pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder)
+#pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + rechteck_folder)
+pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder_lager)
 
 d3plot_path = os.path.join(pfad,"d3plot")
 binout_path = os.path.join(pfad,"binout")
@@ -59,7 +62,8 @@ node_indexes = d3plot.arrays[ArrayType.element_shell_node_indexes]
 mean_el_volumes = []
 probe_volumes = []
 
-last_step = 180
+last_step = strains.shape[0]
+#last_step = 50
 
 for t in range(last_step):
     mean_el_volume, probe_volume = force.calculate_volume(node_indexes,node_displacement[t,:,:],strains[t,:,:],np.mean(d3plot.arrays[ArrayType.element_shell_thickness][t]))
@@ -241,6 +245,7 @@ def calc_first_principle_value(vector):
     #berechnen der ersten Hauptgröße, die vorliegt, wenn ein homogenes Verzerrungsfeld vorliegen würde
     #entspricht dem Radius des Zylinders
     principle_I = np.linalg.norm(principle_values)
+    principle_I = principle_values[0]
     return principle_I
     
     
@@ -273,8 +278,8 @@ while True:
 #2Dim Newton
 while True:
     F = np.zeros(2)
-    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 1)-0.012352254229967219 #korrektur term ([E] = MPa, [F] = N) (Abweichung aufgrund des durchschnittlichen EL. vols)
-    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 2)-0.029571290757218982
+    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 1)-F_x(strains,u,correct_force,volume0, 2450, 0.38,t = 1) #korrektur term ([E] = MPa, [F] = N) (Abweichung aufgrund des durchschnittlichen EL. vols)
+    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 2)-F_x(strains,u,correct_force,volume0, 2450, 0.38,t = 2)
     
     J = np.zeros([2,2])
     J[0,0] = dF_dE(strains,volume0,x[0],x[1],1)
@@ -301,7 +306,7 @@ plastic_strain = []
 #d_eps : np.array, shape: (n_states,n_ip,6), zeitl. Ableitungen der Dehnungen an jedem Integrationspunkt, aller Zeitschritte
 
 for t in range(strains.shape[0]):
-    #bei einer Abweichung zwischen der berechneten Kraft und der gemessenen Kraft um > 2N wird die approximierte Fließspannung bestimmt
+    #bei einer Abweichung zwischen der berechneten Kraft und der gemessenen Kraft um > 10 N wird die approximierte Fließspannung bestimmt
     if abs(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t)) > 2:
         
         plastic_strain.append(calc_first_principle_value(np.mean(strains[t,:,:],axis = 0)))
@@ -325,10 +330,10 @@ cm = [E,nu,10e03,10e03,1,1,1]
 #sigmas = mat_shl.calc_stresses(strains,cm,verbose = False) #GPa
 
 fig,ax = plt.subplots(figsize=(8, 8))
-ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "dashed", linewidth = 2, color = "k")
+ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "solid", linewidth = 2, color = "k")
 ax.plot(np.array(cy["plastic_strain"])[:125],np.array(cy["sig_y"])[:125], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
-ax.legend()
+ax.legend(loc = "lower right")
 ax.grid(visible = True)
-ax.set_ylim(bottom = 0, top = 55)
+ax.set_ylim(bottom = 0)
 ax.set_xlabel("$\epsilon_{p}$ [-]")
 ax.set_ylabel("$\sigma_{y}$ [MPa] ")
