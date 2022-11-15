@@ -1,8 +1,8 @@
 from lasso.dyna import D3plot, ArrayType,Binout
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 
+import pandas as pd
 import os
 import mat
 import Force as force
@@ -25,8 +25,7 @@ keyword_path = os.path.join(pfad,"model.k")
 mat_shl = mat.Wrapper(keyword_path,"shl")
 mat_sld = mat.Wrapper(keyword_path,"sld")
 
-first_step = 0
-last_step = 40
+
 #BINOUT
 binout = Binout(binout_path)
 
@@ -55,33 +54,25 @@ node_coord_0 = node_displacement[0,:,:]
 eps_0 = strains[0,:,:]
 node_indexes = d3plot.arrays[ArrayType.element_shell_node_indexes]
 
+
 #MW des Elementvolumens
-volume0 = force.calculate_volume(node_indexes,node_coord_0,eps_0,t0)
+mean_el_volumes = []
+probe_volumes = []
 
+last_step = 180
 
-"""
-stresses = d3plot.arrays[ArrayType.element_solid_stress]
-stresses = stresses[:,:,0,:]
-#: shape: (n_states, n_solids, n_solid_layers, xx_yy_zz_xy_yz_xz) -> n_solid_layers = 1
-strains = d3plot.arrays[ArrayType.element_solid_strain][:,:,0,:]            
-#: shape (n_states, n_shells_non_rigid, upper_lower, xx_yy_zz_xy_yz_xz)  -> n_solid_layers = 1
-"""
-
-#Single-element-Simulation
-
-cm = [2.45,0.38,10e03,10e03,1,1,1]
-
-last_step = 22
+for t in range(last_step):
+    mean_el_volume, probe_volume = force.calculate_volume(node_indexes,node_displacement[t,:,:],strains[t,:,:],np.mean(d3plot.arrays[ArrayType.element_shell_thickness][t]))
+    mean_el_volumes.append(mean_el_volume)
+    probe_volumes.append(probe_volume)
 
 strains = strains[:last_step,:,:]
 stresses = stresses[:last_step,:,:] #GPa
 
-sigmas = mat_shl.calc_stresses(strains,cm,verbose = False) #GPa
+
 #sigmas = mat_sld.calc_stresses(strains,verbose = False)
 
-
-
-def F_x(eps,u,force,volume, E, nu):
+def F_x(eps,u,force,volume, E, nu,t):
     """  
     Spannungsberechnung für eine elastische Deformation nach dem Hooke'schen Gesetz
 
@@ -105,11 +96,13 @@ def F_x(eps,u,force,volume, E, nu):
         E-Modul
     nu : float
         Querkontraktionszahl
-
+        
+    t : int
+        Timestep an dem die Auswertung durchgeführt werden soll
     Returns
     -------
     Func : np.array, shape: (2,)
-        Funktion für das Newton-Verfahren
+        Funktion für das Newton-Verfahren (Differenz zwischen der Formänderungsenergie und der Arbeit)
         
     """
       
@@ -126,14 +119,12 @@ def F_x(eps,u,force,volume, E, nu):
     d_eps = np.gradient(eps,axis = 0)[:,:,:]
     du = np.gradient(u)
     
-    Func = np.zeros(2)
-    
-    for j,t in enumerate([1,2]):
-    
-        summe = 0
-        for i in range(eps.shape[1]):
-            summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
-        Func[j] =  summe - du[t]*force[t]
+    Func = 0
+    summe = 0
+ 
+    for i in range(eps.shape[1]):
+        summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
+    Func =  summe - du[t]*force[t]
 
     return Func
 
@@ -220,14 +211,45 @@ def dF_dnu(eps,volume,E,nu,t):
     return summe
     
 
+def calc_first_principle_value(vector):
+    """
+    Berechnet die ersten Hauptgrößen unter der Annahme eines homogenen Spannugnszustandes in der gesamten Probe
+    Größen für die diese Funktion angewendet werden kann: Tensor der Dehnunginkremente, Verzerrungstensor oder Spannungstensor
+    Die Hauptgrößen entsprechen den Eigenwerten der jeweiligen Größen
+    Die erste Hauptgröße wird aus den drei Eigenwerten anhand der euklidischen Norm berechnet
 
+    Parameters
+    ----------
+    vector : np.array, shape: (6,)
+        Beinhaltet die 6 relevanten Größen mit der Indizierung: xx,yy,zz,xy,yz,zx
 
+    Returns
+    -------
+    principle_I : float
+       Die ersten Hauptgrößen unter der Annahme eines homogenen Spannugnszustandes 
+
+    """
+    m = np.zeros([3,3])
+    #reshapen von xx,yy,zz,xy,yz,zx in 3x3 Matrix, damit die Eigenwerte direkt berechnet werden können
+    for i in range(3):
+        m[i,i]=vector[i]
+    m[1,0],m[0,1] = vector[3],vector[3]
+    m[1,2],m[2,1] = vector[4],vector[4]
+    m[2,0],m[0,2] = vector[5],vector[5]
+    #berechnen der Hauptgrößen (Eigenwerte)
+    principle_values = np.linalg.eig(m)[0]
+    #berechnen der ersten Hauptgröße, die vorliegt, wenn ein homogenes Verzerrungsfeld vorliegen würde
+    #entspricht dem Radius des Zylinders
+    principle_I = np.linalg.norm(principle_values)
+    return principle_I
+    
+    
 u= force.displacement(node_coordinates,node_displacement,boundary = displacement_dir)
-correct_force = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))*1000
-E_start = 1*1000 #korrekt: 2.45
-rn_start = 0.45 #korrekt: 0.38
-x = np.array([E_start,rn_start])
-
+correct_force = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))*1000 #F
+E_start = 1*1000 #korrekt: 2.45 Gpa
+nu_start = 0.45 #korrekt: 0.38
+x = np.array([E_start,nu_start])
+volume0 = mean_el_volumes[0]
 
 i = 0
 """
@@ -251,8 +273,8 @@ while True:
 #2Dim Newton
 while True:
     F = np.zeros(2)
-    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1])[0]-0.012352254229967219 #korrektur term (abweichung aufgrund des durchschnittlichen EL. vols)
-    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1])[1]-0.029571290757218982
+    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 1)-0.012352254229967219 #korrektur term ([E] = MPa, [F] = N) (Abweichung aufgrund des durchschnittlichen EL. vols)
+    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 2)-0.029571290757218982
     
     J = np.zeros([2,2])
     J[0,0] = dF_dE(strains,volume0,x[0],x[1],1)
@@ -270,5 +292,43 @@ while True:
     if abs(max(F)) < 0.0000001:
         break
 
-    
+E = x[0]
+nu = x[1]
+d_eps = np.gradient(strains,axis = 0)[:,:,:]
+du = np.gradient(u)
+sig_y = []
+plastic_strain = []
+#d_eps : np.array, shape: (n_states,n_ip,6), zeitl. Ableitungen der Dehnungen an jedem Integrationspunkt, aller Zeitschritte
 
+for t in range(strains.shape[0]):
+    #bei einer Abweichung zwischen der berechneten Kraft und der gemessenen Kraft um > 2N wird die approximierte Fließspannung bestimmt
+    if abs(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t)) > 2:
+        
+        plastic_strain.append(calc_first_principle_value(np.mean(strains[t,:,:],axis = 0)))
+        d_eps_I = calc_first_principle_value(np.mean(d_eps[t,:,:],axis = 0))
+        
+        #direktes Auflösen der Fließspannung, nach der Energiebilanz, unter der Annahme, dass ein homogenes Spannungsfeld vorliegt
+        sig_y.append(correct_force[t]*du[t]/(probe_volumes[t]*d_eps_I))
+        
+
+plastic_strain = np.array(plastic_strain)
+#abziehen der elastischen Dehnung (die Dehnung beim ersten mal vorliegt, wenn die Energiebilanz nicht mehr erfüllt wird)
+#damit tatsächlich ausschließlich die plastische Dehnung vorliegt
+plastic_strain = plastic_strain-plastic_strain[0]
+
+
+
+xlsx_path = os.path.abspath(os.getcwd()+ "/../Simulations/yield_stress_T65.xlsx")
+cy = pd.read_excel(xlsx_path,header = None, usecols = "A:B",nrows = 500,dtype = float)
+cy.columns = ["plastic_strain","sig_y"]
+cm = [E,nu,10e03,10e03,1,1,1]
+#sigmas = mat_shl.calc_stresses(strains,cm,verbose = False) #GPa
+
+fig,ax = plt.subplots(figsize=(8, 8))
+ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "dashed", linewidth = 2, color = "k")
+ax.plot(np.array(cy["plastic_strain"])[:125],np.array(cy["sig_y"])[:125], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
+ax.legend()
+ax.grid(visible = True)
+ax.set_ylim(bottom = 0, top = 55)
+ax.set_xlabel("$\epsilon_{p}$ [-]")
+ax.set_ylabel("$\sigma_{y}$ [MPa] ")

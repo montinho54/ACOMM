@@ -67,8 +67,7 @@ class Node:
        
 def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t):
     """
-    Berechnet das Volumen des gesamten Simulationskörpers indem jedes Elementvolumen berechnet wird
-    und anschließend über alle Elementvolumina aufsummiert wird
+    Berechnet das durchschnittliche Elementvolumen
 
     Parameters
     ----------
@@ -85,8 +84,11 @@ def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t)
 
     Returns
     -------
-    volume : float
+    mean_el_volume : float
         Mittelwert der Elementvolumen
+    
+    probe_volume : float
+        Gesamtes Probenvolumen
 
 
     """
@@ -173,8 +175,9 @@ def calculate_volume(element_shell_node_indexes,node_coord,shell_strains_step,t)
             thicknesses.append(thickness)
             
             
-    volume = np.mean(el_volumes)    
-    return volume
+    mean_el_volume = np.mean(el_volumes)
+    probe_volume = np.sum(el_volumes)
+    return mean_el_volume,probe_volume
     
     
 
