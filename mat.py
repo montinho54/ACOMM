@@ -9,18 +9,11 @@ Created on Mon Oct 31 13:34:06 2022
 import numpy as np
 
 class Wrapper:
-    def __init__(self,keyword_path,element_type):
+    def __init__(self,element_type):
         """
         Parameters
         ----------
-        keyword_path : String
-            Pfad, der Keyword-Datei in dem folgende Materialkonstanten enhalten sind:
-            - e (E-Modul in der selben Einheit, wie die FLießspannung der Fließkurve (Mpa oder Gpa)), 
-            - pr (Querkontraktionszahl), 
-            - eppf (Float) effective plastic strain at which material softening begins (logaritmic strain), 
-            - eppfr (Float) effective plastic strain at which material ruptures (logaritmic strain)
-            Desweiteren muss die Keyword-Datei die Loadcurve enthalten, welche die Fließspannung über die effektive plastische Dehnung definiert.
-            
+                  
         element_type : String
             shell, shl, Shell 
             oder:
@@ -31,10 +24,9 @@ class Wrapper:
         None.
 
         """
-        self.keyword_path = keyword_path
         self.element_type = element_type
         
-    def calc_stresses(self,strains,cm,**kwargs):
+    def calc_stresses(self,strains,cm,crv,**kwargs):
         """
         Ruft das um47shl Materialmodell als Wrapper auf
     
@@ -52,7 +44,10 @@ class Wrapper:
             cm[4]                                   = y0 (Fließspannung in Mpa)
             cm[5]                                   = mid (Material ID)
             cm[6]                                   = lcss (Loadcurve ID im Material)
-              
+        
+        crv : np.array() ,shape: n,2
+            Loadcurve, erste Spalte: Effektive plastische Dehnungn, zweite Spalte: effektive Fließspannung
+        
         kwargs
         ------
         verbose : int
@@ -88,6 +83,8 @@ class Wrapper:
         if len(strains.shape) == 1:
             spos = True
             strains = strains.reshape(1,1,strains.shape[0])
+        elif len(strains.shape) == 2: #es wird nur ein zeitpunkt berücksichtigt
+            strains = strains[np.newaxis,:,:]
         
 
     
@@ -110,9 +107,13 @@ class Wrapper:
         
         for i in range(len(incs)):                
             if self.element_type == "sld" or self.element_type == "solid" or self.element_type == "Solid":
-                sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_sld(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,self.keyword_path,**kwargs)
+                sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_sld(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,crv,**kwargs)
             elif self.element_type == "shl" or self.element_type == "shell" or self.element_type == "Shell":
-                sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_shl(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,self.keyword_path,**kwargs)
+                try:
+                    sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_shl(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,crv,**kwargs)
+                    print(i)
+                except TypeError:
+                    break
             else:
                 print("mat81:\nEs wurde ein falscher Elementtyp bestimmt. Folgende Elementtypen sind möglich:\nshell, shl, Shell\noder:\nsolid, sld, Solid")
             stresses[i,:,0] = sig1
@@ -128,7 +129,7 @@ class Wrapper:
         return stresses
 
 
-def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keyword_path,**kwargs):
+def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,crv,**kwargs):
     """
     Materialmodell für Solids:
         - führt grundlegenen Spannungsberechnungen für Solids durch (v.Mises Plastizität -> Radial Return) 
@@ -161,6 +162,9 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
         
     keyword_path : String
         absoluter Pfad (String) der Keyword-Datei
+        
+    crv : np.array() ,shape: n,2
+        Loadcurve, erste Spalte: Effektive plastische Dehnungn, zweite Spalte: effektive Fließspannung
         
     mid : int
         Bestimmt welches Material (Material-ID) ausgewertet werden soll. Wenn kein mid übergeben wird, wird das erste Material in der Keyword-Datei ausgewertet 
@@ -274,7 +278,7 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
         
 
         #Ausgeben der Fließspannung in jedem IP
-        sigy[i],hard[i] = get_sigy_hard(keyword_path,tepsp[i])
+        sigy[i],hard[i] = crvval(crv,tepsp[i])
         
         #checken, ob die Fließbedingung verletzt wird (ist das Ergebnis <=0 oder >0)
         yield1[i] = np.sqrt(3.0*aj2[i])-sigy[i]
@@ -318,7 +322,7 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
             tepsp[i]=epsps[i]+depi
 
             #ausgeben der Fließspannung in jedem IP
-            sigy[i],hard[i] = get_sigy_hard(keyword_path,tepsp[i])
+            sigy[i],hard[i] = crvval(crv,tepsp[i])
             
             if verbose == 2:
                 print("tepsp: {:.7f} | d1: {:.3f} | d2: {:.3f} | d3: {:.8f} | ".format(tepsp[i],d1[i],d2[i],d3[i]))
@@ -398,7 +402,7 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
 
 
 
-def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keyword_path,**kwargs):
+def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,crv,**kwargs):
     """
     Materialmodell für Shells:
         - führt grundlegenen Spannungsberechnungen für Schalen durch (v.Mises Plastizität -> Radial Return) 
@@ -430,8 +434,8 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
         hsvs[2]                                 = total effective strain rate, shape = (n_ips,)
         
         
-    keyword_path : String
-        absoluter Pfad (String) der Keyword-Datei
+    crv : np.array() ,shape: n,2
+        Loadcurve, erste Spalte: Effektive plastische Dehnungn, zweite Spalte: effektive Fließspannung
         
     mid : int
         Bestimmt welches Material (Material-ID) ausgewertet werden soll. Wenn kein mid übergeben wird, wird das erste Material in der Keyword-Datei ausgewertet 
@@ -559,7 +563,7 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
             
 
             #Ausgeben der Fließspannung in jedem IP
-            sigy[i],hard[i] = get_sigy_hard(keyword_path,tepsp[i])
+            sigy[i],hard[i] = crvval(crv,tepsp[i])
             
             #checken, ob die Fließbedingung verletzt wird (ist das Ergebnis <=0 oder >0)
             yield1[i] = np.sqrt(3.0*aj2[i])-sigy[i]
@@ -603,7 +607,7 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
                 tepsp[i]=epsps[i]+depi
 
                 #ausgeben der Fließspannung in jedem IP
-                sigy[i],hard[i] = get_sigy_hard(keyword_path,tepsp[i])
+                sigy[i],hard[i] = crvval(crv,tepsp[i])
                 
                 if verbose == 2:
                     print("jcount: {} | tepsp: {:.7f} | d1: {:.3f} | d2: {:.3f} | deps3: {:.8f} |".format(jcount,tepsp[i],d1[i],d2[i],deps3[i]))
@@ -709,6 +713,46 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,keywor
             
     return [sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs]
 
+def crvval(crv,xval):
+    """
+    Extrapoliert die vorgegebene Fließkurve linear anhand der letzten zwei Stützstellen 
+    (In LS-Dyna wird die Fließkurve standardmäßig linear extrapoliert)
+    Führt eine lineare Interpolation von crv durch
+    und ermittelt den Rückgabewert an xval
+
+
+    Parameters
+    ----------
+    crv : np.array() ,shape: n,2
+        Loadcurve, erste Spalte: Effektive plastische Dehnungn, zweite Spalte: effektive Fließspannung
+    xval : float
+        Effektive plastische Dehnung, an der die effektive Fließspannung ermittelt werden soll
+
+    Returns
+    -------
+    yval : float
+        Effektive Fließspannung an xval
+    slope : float
+    
+        Steigung der Loadcurve an xval (wird durch zentrale Differenzen und anschließender linearen Interpolation ermittelt)
+    """
+    
+
+    #lineare Extrapolation der Fließkurve
+    fit = np.polyfit(crv[-2:,0],crv[-2:,1],1)
+    x = 20
+    line = np.poly1d(fit)
+    y = line(x)
+    crv = np.vstack([crv, [x,y]])
+
+
+    yval = np.interp(xval, crv[:,0], crv[:,1])
+    #crv[:,0] is nicht äquidistant -> dx variiert
+    grad = np.gradient(crv[:,1],crv[:,0])
+    slope = np.interp(xval, crv[:,0], grad)
+    
+    return yval, slope 
+
 def read_lc_from_keyword(keyword_path,**kwargs):
     
     """
@@ -798,150 +842,4 @@ def read_lc_from_keyword(keyword_path,**kwargs):
     lc_arr = np.array(lc_list)         
     return lc_arr
 
-
-               
-            
-        
-
-def crvval(crv,xval):
-    """
-    Extrapoliert die vorgegebene Fließkurve linear anhand der letzten zwei Stützstellen 
-    (In LS-Dyna wird die Fließkurve standardmäßig linear extrapoliert)
-    Führt eine lineare Interpolation von crv durch
-    und ermittelt den Rückgabewert an xval
-
-
-    Parameters
-    ----------
-    crv : np.array() ,shape: n,2
-        Loadcurve, erste Spalte: Effektive plastische Dehnungn, zweite Spalte: effektive Fließspannung
-    xval : float
-        Effektive plastische Dehnung, an der die effektive Fließspannung ermittelt werden soll
-
-    Returns
-    -------
-    yval : float
-        Effektive Fließspannung an xval
-    slope : float
-    
-        Steigung der Loadcurve an xval (wird durch zentrale Differenzen und anschließender linearen Interpolation ermittelt)
-    """
-    
-
-    #lineare Extrapolation der Fließkurve
-    fit = np.polyfit(crv[-2:,0],crv[-2:,1],1)
-    x = 20
-    line = np.poly1d(fit)
-    y = line(x)
-    crv = np.vstack([crv, [x,y]])
-
-
-    yval = np.interp(xval, crv[:,0], crv[:,1])
-    #crv[:,0] is nicht äquidistant -> dx variiert
-    grad = np.gradient(crv[:,1],crv[:,0])
-    slope = np.interp(xval, crv[:,0], grad)
-    
-    return yval, slope   
- 
-
-def search_lc_with_lcid(keyword_path,lcss):
-    """
-    Ließt die Keyword-Datei in Keywordpath ein und gibt die Zeile der Loadcurve aus, welche die Loadcurve-ID = lcss besitzt.
-
-    Parameters
-    ----------
-    keyword_path : string
-        pfad der Keyword Datei, welche die Materialparameter enthält
-    lcss : int
-        Loadcurve-ID, der Loadcurve, die im geünschten Material hinterlegt ist
-
-    Returns
-    -------
-    first_line : int
-        Zeile, ab der die Loadcurve beginnt, die der Loadcurve-ID entspricht
-
-    """
-    with open(keyword_path) as file:
-        lines = file.readlines()
-        lines = [line.rstrip() for line in lines]
-        
-        
-        for i,line in enumerate(lines):
-            if line == "*DEFINE_CURVE_TITLE":
-                j = 3
-                break
-            elif line == "*DEFINE_CURVE":
-                j = 2
-                break
-        s = i+j
-        line = lines[s]
-    
-        for j in range(1,11):
-
-            if line[10-j-1] == " ":      
-                lcid = int(line[10-j:10])
-                break
-            
-        while lcid != lcss:
-            
-            for i,line in enumerate(lines):
-                if line == "*DEFINE_CURVE_TITLE" and i > s:
-                    j = 3
-                    break
-                elif line == "*DEFINE_CURVE" and i > s:
-                    j = 2
-                    break
-            s = i+j
-            line = lines[s]
-        
-            for j in range(1,11):
-
-                if line[10-j-1] == " ":      
-                    lcid = int(line[10-j:10])
-                    break
-    first_line = s-1
-    return first_line
-                
-    
-
-def get_sigy_hard(keyword_path,xval):
-    """
-    Eigene implementierung der get_sigy_hard subroutine
-  
-    Parameters
-    ----------
-    keyword_path : string
-        Pfad der Keyword-Datei 
-    xval : float
-        Effektive plastische Dehnung an der die Fließspannung ausgewertet werden soll
-
-    Returns
-    -------
-    yval : float
-        FLießspannung (sigy) 
-    slope : float
-        Steigung der loadcurve an xval (im FORTRAN Code: hard[i])
-
-    """
-    #ursprüngliche Version
-    """
-    mid = int(cm[5])
-
-    mid,i = read_material_constants(keyword_path, mid = mid)
-    cm_dict = read_constants_from_keyword(keyword_path,first_constant = "mid", n_lines = 2, first_line_to_read = i)
-    lcid = cm_dict["lcss"]
-    i = search_lc_with_lcid(keyword_path,lcid)
-    consts = read_constants_from_keyword(keyword_path,first_constant = "lcid", n_lines = 1,first_line_to_read = i)
-
-    lcid = int(consts["lcid"])
-    sfa = consts["sfa"]
-    sfo = consts["sfo"]
-    offa = consts["offa"]
-    offo = consts["offo"]
-
-    crv= read_lc_from_keyword(keyword_path,first_line_to_read = i, sfa = sfa, sfo = sfo, offa = offa, offo = offo)
-    yval,slope = crvval(crv,xval)
-    """
-    yval = 0.02
-    slope = 0.0
-    return yval, slope          
+                     

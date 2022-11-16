@@ -25,8 +25,9 @@ binout_path = os.path.join(pfad,"binout")
 keyword_path = os.path.join(pfad,"model.k")
 
 
-mat_shl = mat.Wrapper(keyword_path,"shl")
-mat_sld = mat.Wrapper(keyword_path,"sld")
+
+mat_shl = mat.Wrapper("shl")
+mat_sld = mat.Wrapper("sld")
 
 
 #BINOUT
@@ -47,9 +48,9 @@ node_displacement = d3plot.arrays[ArrayType.node_displacement]
 
 
 stresses = d3plot.arrays[ArrayType.element_shell_stress][:,:,0,:]           
-#: shape (n_states, n_shells_non_rigid, n_shell_layers, xx_yy_zz_xy_yz_xz) -> stresses unterscheiden seich nicht in z dimension, da ESZ)
+#: shape (n_states, n_shells_non_rigid, n_shell_layers, xx_yy_zz_xy_yz_xz) -> stresses unterscheiden sich nicht in z dimension, da ESZ)
 strains = d3plot.arrays[ArrayType.element_shell_strain][:,:,0,:]            
-#: shape (n_states, n_shells_non_rigid, upper_lower, xx_yy_zz_xy_yz_xz)  -> strains unterscheiden seich nicht in z dimension, da ESZ)
+#: shape (n_states, n_shells_non_rigid, upper_lower, xx_yy_zz_xy_yz_xz)  -> strains unterscheiden sich nicht in z dimension, da ESZ)
 
 t0 = np.mean(d3plot.arrays[ArrayType.element_shell_thickness][0])
 #: shape (n_states, n_shells_non_rigid) 
@@ -73,14 +74,18 @@ for t in range(last_step):
 strains = strains[:last_step,:,:]
 stresses = stresses[:last_step,:,:] #GPa
 
+cm = [2450,0.38,10e03,10e03,1,1,1]
+cy = mat.read_lc_from_keyword(keyword_path, first_line_to_read = 148)
+#sigmas = mat_shl.calc_stresses(strains[:,:,:],cm,cy) #GPa
 
-#sigmas = mat_sld.calc_stresses(strains,verbose = False)
-
-def F_x(eps,u,force,volume, E, nu,t):
+def F_x(eps,u,force,volume, E, nu,t,**kwargs):
     """  
-    Spannungsberechnung für eine elastische Deformation nach dem Hooke'schen Gesetz
-
-    [eps_11,eps_22,eps_33, eps_12, eps_23, eps_31]
+    Berechnet die Differenz zwischen der inneren Formänderungsenergie und der Arbeit
+    
+    Spannungsberechnung ist optional:
+        für eine elastische Deformation nach dem Hooke'schen Gesetz [eps_11,eps_22,eps_33, eps_12, eps_23, eps_31]
+        
+    
     
     Parameters
     ----------
@@ -103,32 +108,47 @@ def F_x(eps,u,force,volume, E, nu,t):
         
     t : int
         Timestep an dem die Auswertung durchgeführt werden soll
+        
+    kwargs
+    ------
+    sig : np.array: (n_states,n_ip,6)
+        Spannungen an jedem IP, aller Zeitschritte
+        (Wenn vorgegeben, wird die Spannungsberechnung mittels Elastizitätstensor übersprungen)
+        
+        
     Returns
     -------
     Func : np.array, shape: (2,)
         Funktion für das Newton-Verfahren (Differenz zwischen der Formänderungsenergie und der Arbeit)
         
     """
-      
-    #bestimmen des Elastizitätstensors C
-    C_11 = E*(1-nu)/((1+nu)*(1-2*nu))
-    C_12 = E*nu/((1+nu)*(1-2*nu))
-    C_44 = E*(1-2*nu)/((1+nu)*(1-2*nu))
-    C = np.zeros([6,6])
-    C[:3,:3] = C_12
-    C[0,0],C[1,1],C[2,2] = C_11,C_11,C_11
-    C[3,3],C[4,4],C[5,5] = C_44,C_44,C_44
-    
-    
     d_eps = np.gradient(eps,axis = 0)[:,:,:]
     du = np.gradient(u)
     
     Func = 0
     summe = 0
- 
-    for i in range(eps.shape[1]):
-        summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
-    Func =  summe - du[t]*force[t]
+    
+    if "sig" in kwargs:
+        sig = kwargs["sig"]
+        
+        for i in range(eps.shape[1]):
+            summe = summe + volume*np.dot(sig[t,i,:],d_eps[t,i,:])
+        Func =  summe - du[t]*force[t]
+    
+    else:
+        
+        #bestimmen des Elastizitätstensors C
+        C_11 = E*(1-nu)/((1+nu)*(1-2*nu))
+        C_12 = E*nu/((1+nu)*(1-2*nu))
+        C_44 = E*(1-2*nu)/((1+nu)*(1-2*nu))
+        C = np.zeros([6,6])
+        C[:3,:3] = C_12
+        C[0,0],C[1,1],C[2,2] = C_11,C_11,C_11
+        C[3,3],C[4,4],C[5,5] = C_44,C_44,C_44
+        
+        for i in range(eps.shape[1]):
+            summe = summe + volume*np.dot(C@eps[t,i,:],d_eps[t,i,:])
+        Func =  summe - du[t]*force[t]
 
     return Func
 
@@ -306,7 +326,7 @@ plastic_strain = []
 #d_eps : np.array, shape: (n_states,n_ip,6), zeitl. Ableitungen der Dehnungen an jedem Integrationspunkt, aller Zeitschritte
 
 for t in range(strains.shape[0]):
-    #bei einer Abweichung zwischen der berechneten Kraft und der gemessenen Kraft um > 10 N wird die approximierte Fließspannung bestimmt
+    #bei einer Abweichung zwischen W_in und W_ex um > 2 J wird die approximierte Fließspannung bestimmt
     if abs(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t)) > 2:
         
         plastic_strain.append(calc_first_principle_value(np.mean(strains[t,:,:],axis = 0)))
@@ -316,24 +336,48 @@ for t in range(strains.shape[0]):
         sig_y.append(correct_force[t]*du[t]/(probe_volumes[t]*d_eps_I))
         
 
+sig_y = np.array(sig_y)
 plastic_strain = np.array(plastic_strain)
 #abziehen der elastischen Dehnung (die Dehnung beim ersten mal vorliegt, wenn die Energiebilanz nicht mehr erfüllt wird)
 #damit tatsächlich ausschließlich die plastische Dehnung vorliegt
 plastic_strain = plastic_strain-plastic_strain[0]
 
 
+cy = mat.read_lc_from_keyword(keyword_path, first_line_to_read = 148)
 
-xlsx_path = os.path.abspath(os.getcwd()+ "/../Simulations/yield_stress_T65.xlsx")
-cy = pd.read_excel(xlsx_path,header = None, usecols = "A:B",nrows = 500,dtype = float)
-cy.columns = ["plastic_strain","sig_y"]
-cm = [E,nu,10e03,10e03,1,1,1]
-#sigmas = mat_shl.calc_stresses(strains,cm,verbose = False) #GPa
 
 fig,ax = plt.subplots(figsize=(8, 8))
 ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "solid", linewidth = 2, color = "k")
-ax.plot(np.array(cy["plastic_strain"])[:125],np.array(cy["sig_y"])[:125], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
+ax.plot(cy[:125,0],cy[:125,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
 ax.legend(loc = "lower right")
 ax.grid(visible = True)
 ax.set_ylim(bottom = 0)
 ax.set_xlabel("$\epsilon_{p}$ [-]")
 ax.set_ylabel("$\sigma_{y}$ [MPa] ")
+ax.set_title("Iteration 0")
+
+"""
+###################################
+"""
+
+#beginne die fließkurveniteration
+it_cy = np.concatenate((plastic_strain.reshape([-1,1]),sig_y.reshape([-1,1])),axis = 1)
+
+sigmas_it = mat_shl.calc_stresses(strains[:,:,:],cm,it_cy) #GPa
+
+    
+dif_W = []
+
+for t in range(sigmas_it.shape[0]):
+
+    dif_W.append(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t,sig = sigmas_it))
+
+
+fig,ax = plt.subplots(figsize=(8, 8))
+ax.plot(dif_W, label = "W_in-W_ex ", linestyle = "solid", linewidth = 2, color = "k")
+
+ax.grid(visible = True)
+
+ax.set_xlabel("t")
+ax.set_ylabel("[J]")
+ax.set_title("Energiedifferenz aus Bilanzgleichung mit Fließkurve aus Iteration 0")
