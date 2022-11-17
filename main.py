@@ -2,7 +2,7 @@ from lasso.dyna import D3plot, ArrayType,Binout
 import numpy as np
 import matplotlib.pyplot as plt
 
-import pandas as pd
+from scipy import signal
 import os
 import mat
 import Force as force
@@ -12,19 +12,31 @@ import Force as force
 material = "T65"
 
 #Laden der Validierungssimulaitonen
-MZ_folder = r"/MZ_AIMM_korrekt_t65_lcid3_lc_mit_setzen_1860el_elast"
-MZ_folder_lager = r"/MZ_AIMM_korrekt_t65_lcid3_lc_mit_setzen_1860el_elast_opt_Lager"
-rechteck_folder = r"/MAT24_T65_shell_Rechtecksprobe_optimale_Lagerung"
-#pfad = os.path.abspath(os.getcwd()+ "/../Simulations/MAT81_" + material + "_shl")
-#pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder)
-#pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + rechteck_folder)
-pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_folder_lager)
+MZ_T45_gesperrt = r"MZ_t45_lc_mit_setzen_1800el_gesperrt"
+MZ_T45_offen = r"MZ_t45_lc_mit_setzen_1800el_offen"
+
+MZ_T65_gesperrt = r"MZ_t65_lc_mit_setzen_1800el_gesperrt"
+MZ_T65_offen = r"MZ_t65_lc_mit_setzen_1800el_offen"
+
+rechteck_T45_gesperrt = r"rechteck_t45_lc_mit_setzen_1800el_gesperrt"
+rechteck_T45_offen = r"rechteck_t45_lc_mit_setzen_1800el_offen"
+
+rechteck_T65_gesperrt = r"rechteck_t65_lc_mit_setzen_1800el_gesperrt"
+rechteck_T65_offen = r"rechteck_t65_lc_mit_setzen_1800el_offen"
+
+
+pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_T65_offen)
+titel = "MZ_T65_offen"
+
+
 
 d3plot_path = os.path.join(pfad,"d3plot")
 binout_path = os.path.join(pfad,"binout")
 keyword_path = os.path.join(pfad,"model.k")
 
-
+#rechteck 85
+#taillierte probe 120
+cy = mat.read_lc_from_keyword(keyword_path, first_line_to_read = 85)
 
 mat_shl = mat.Wrapper("shl")
 mat_sld = mat.Wrapper("sld")
@@ -75,7 +87,8 @@ strains = strains[:last_step,:,:]
 stresses = stresses[:last_step,:,:] #GPa
 
 cm = [2450,0.38,10e03,10e03,1,1,1]
-cy = mat.read_lc_from_keyword(keyword_path, first_line_to_read = 148)
+
+
 #sigmas = mat_shl.calc_stresses(strains[:,:,:],cm,cy) #GPa
 
 def F_x(eps,u,force,volume, E, nu,t,**kwargs):
@@ -253,6 +266,8 @@ def calc_first_principle_value(vector):
        Die ersten Hauptgrößen unter der Annahme eines homogenen Spannugnszustandes 
 
     """
+    
+    """
     m = np.zeros([3,3])
     #reshapen von xx,yy,zz,xy,yz,zx in 3x3 Matrix, damit die Eigenwerte direkt berechnet werden können
     for i in range(3):
@@ -266,6 +281,18 @@ def calc_first_principle_value(vector):
     #entspricht dem Radius des Zylinders
     principle_I = np.linalg.norm(principle_values)
     principle_I = principle_values[0]
+    """
+    
+    m = np.zeros([3,3])
+    #reshapen von xx,yy,zz,xy,yz,zx in 3x3 Matrix, damit die Eigenwerte direkt berechnet werden können
+    for i in range(3):
+        m[i,i]=vector[i]
+    m[1,0],m[0,1] = vector[3],vector[3]
+    m[1,2],m[2,1] = vector[4],vector[4]
+    m[2,0],m[0,2] = vector[5],vector[5]
+    
+    principle_I = np.sqrt((2/3)*np.einsum("ij,ij",m,m))
+    
     return principle_I
     
     
@@ -325,10 +352,9 @@ sig_y = []
 plastic_strain = []
 #d_eps : np.array, shape: (n_states,n_ip,6), zeitl. Ableitungen der Dehnungen an jedem Integrationspunkt, aller Zeitschritte
 
-for t in range(strains.shape[0]):
-    #bei einer Abweichung zwischen W_in und W_ex um > 2 J wird die approximierte Fließspannung bestimmt
+for t in range(strains.shape[0]-1):
+    #bei einer Abweichung zwischen dW_in und dW_ex um > 2 J wird die approximierte Fließspannung bestimmt
     if abs(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t)) > 2:
-        
         plastic_strain.append(calc_first_principle_value(np.mean(strains[t,:,:],axis = 0)))
         d_eps_I = calc_first_principle_value(np.mean(d_eps[t,:,:],axis = 0))
         
@@ -338,39 +364,69 @@ for t in range(strains.shape[0]):
 
 sig_y = np.array(sig_y)
 plastic_strain = np.array(plastic_strain)
-#abziehen der elastischen Dehnung (die Dehnung beim ersten mal vorliegt, wenn die Energiebilanz nicht mehr erfüllt wird)
+#abziehen der elastischen Dehnung (die Dehnung, die beim ersten mal vorliegt, wenn die Energiebilanz nicht mehr erfüllt wird)
 #damit tatsächlich ausschließlich die plastische Dehnung vorliegt
 plastic_strain = plastic_strain-plastic_strain[0]
 
 
-cy = mat.read_lc_from_keyword(keyword_path, first_line_to_read = 148)
+
+sig_y_savgol = signal.savgol_filter(sig_y,21,1)
+
+it_cy = np.concatenate((np.append(plastic_strain,1).reshape([-1,1]),np.append(sig_y_savgol,sig_y_savgol[-1]).reshape([-1,1])),axis = 1)
 
 
 fig,ax = plt.subplots(figsize=(8, 8))
 ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "solid", linewidth = 2, color = "k")
-ax.plot(cy[:125,0],cy[:125,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
+ax.plot(plastic_strain, sig_y_savgol, label = "filtered (win_len: 21, order: 1)", linestyle = "dashed", linewidth = 2, color = "b")
+#ax.plot(it_cy[:,0], it_cy[:,1], label = "constantly extrapolated", linestyle = "dashed", linewidth = 2, color = "r")
+ax.plot(cy[:100,0],cy[:100,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
+#ax.plot(cy[:938,0],1000*cy[:938,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
 ax.legend(loc = "lower right")
 ax.grid(visible = True)
 ax.set_ylim(bottom = 0)
 ax.set_xlabel("$\epsilon_{p}$ [-]")
 ax.set_ylabel("$\sigma_{y}$ [MPa] ")
-ax.set_title("Iteration 0")
+ax.set_title(titel)
 
 """
 ###################################
 """
 
 #beginne die fließkurveniteration
-it_cy = np.concatenate((plastic_strain.reshape([-1,1]),sig_y.reshape([-1,1])),axis = 1)
 
-sigmas_it = mat_shl.calc_stresses(strains[:,:,:],cm,it_cy) #GPa
+"""
+sigmas_it = mat_shl.calc_stresses(strains[:,:,:],cm,cy) #GPa
 
-    
+sig_y_it1 = np.copy(cy[:,1])
 dif_W = []
 
-for t in range(sigmas_it.shape[0]):
+start_plastic = sigmas_it.shape[0]-len(sig_y)
+for i,t in enumerate(np.arange(start_plastic,sigmas_it.shape[0])):
+    dif = F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t,sig = sigmas_it)
+    if abs(dif) > 2:
+        d_eps_I = calc_first_principle_value(np.mean(d_eps[t,:,:],axis = 0))
+        print(t)
+        #direktes Auflösen der Fließspannung, nach der Energiebilanz, unter der Annahme, dass ein homogenes Spannungsfeld vorliegt
+        #sig_y_it1[i] = correct_force[t]*du[t]/(probe_volumes[t]*d_eps_I)
+        sig_y_it1[i] = sig_y_it1[i]-dif/(probe_volumes[t]*d_eps_I)
+    dif_W.append(dif)
 
-    dif_W.append(F_x(strains,u,correct_force,mean_el_volumes[t], E, nu,t,sig = sigmas_it))
+
+it1_cy = np.concatenate((np.append(cy[:,0],1).reshape([-1,1]),np.append(sig_y_it1,sig_y_it1[-1]).reshape([-1,1])),axis = 1)
+
+fig,ax = plt.subplots(figsize=(8, 8))
+ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "solid", linewidth = 2, color = "k")
+#ax.plot(plastic_strain, sig_y_savgol_it1, label = "filtered (win_len: 21, order: 1)", linestyle = "dashed", linewidth = 2, color = "b")
+ax.plot(it1_cy[:,0], it1_cy[:,1], label = "constantly extrapolated", linestyle = "dashed", linewidth = 2, color = "r")
+ax.plot(cy[:,0],cy[:,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
+ax.legend(loc = "lower right")
+ax.grid(visible = True)
+ax.set_ylim(bottom = 0)
+ax.set_xlabel("$\epsilon_{p}$ [-]")
+ax.set_ylabel("$\sigma_{y}$ [MPa] ")
+ax.set_title("Iteration 1")
+
+
 
 
 fig,ax = plt.subplots(figsize=(8, 8))
@@ -381,3 +437,8 @@ ax.grid(visible = True)
 ax.set_xlabel("t")
 ax.set_ylabel("[J]")
 ax.set_title("Energiedifferenz aus Bilanzgleichung mit Fließkurve aus Iteration 0")
+
+fig,ax = plt.subplots(figsize=(8, 8))
+ax.plot(sigmas_it[:,22,0],color = "b")
+ax.plot(stresses[:,22,0],color = "r")
+"""
