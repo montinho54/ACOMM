@@ -109,10 +109,11 @@ class Wrapper:
             if self.element_type == "sld" or self.element_type == "solid" or self.element_type == "Solid":
                 sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_sld(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,crv,**kwargs)
             elif self.element_type == "shl" or self.element_type == "shell" or self.element_type == "Shell":
+                print(i)
                 try:
                     sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs = mat_shl(cm,incs[i,:,0],incs[i,:,1],incs[i,:,2],incs[i,:,3],incs[i,:,4],incs[i,:,5],sig1,sig2,sig3,sig4,sig5,sig6,tepsp,hsvs,crv,**kwargs)
-                    print(i)
                 except TypeError:
+                    print("Type Error, da die FLießkurve extrapoliert werden muss, Spannungsberechnug erfolgte bis t = {}".format(i))
                     break
             else:
                 print("mat81:\nEs wurde ein falscher Elementtyp bestimmt. Folgende Elementtypen sind möglich:\nshell, shl, Shell\noder:\nsolid, sld, Solid")
@@ -243,6 +244,13 @@ def mat_sld(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,crv,**
     #numerical parameters
     itmax=20 
     tol=1.e-6
+    
+    #lineare Extrapolation der Fließkurve (findet im ursprünglichen Fortrancode in der Methode Funktion statt)
+    fit = np.polyfit(crv[-2:,0],crv[-2:,1],1)
+    x = 20
+    line = np.poly1d(fit)
+    y = line(x)
+    crv = np.vstack([crv, [x,y]])
     
     #remove damage
     for i in range(nlq):
@@ -520,6 +528,13 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,crv,**
     itmax=20 
     tol=1.e-6
     
+    #lineare Extrapolation der Fließkurve (findet im ursprünglichen Fortrancode in der Methode Funktion statt)
+    fit = np.polyfit(crv[-2:,0],crv[-2:,1],1)
+    x = 20
+    line = np.poly1d(fit)
+    y = line(x)
+    crv = np.vstack([crv, [x,y]])
+    
     #remove damage
     for i in range(nlq):
         dmg[i] = hsvs[i,0]
@@ -713,6 +728,7 @@ def mat_shl(cm,d1,d2,d3,d4,d5,d6,sig1,sig2,sig3,sig4,sig5,sig6,epsps,hsvs,crv,**
             
     return [sig1,sig2,sig3,sig4,sig5,sig6,d3,tepsp,hsvs]
 
+
 def crvval(crv,xval):
     """
     Extrapoliert die vorgegebene Fließkurve linear anhand der letzten zwei Stützstellen 
@@ -737,13 +753,6 @@ def crvval(crv,xval):
         Steigung der Loadcurve an xval (wird durch zentrale Differenzen und anschließender linearen Interpolation ermittelt)
     """
     
-
-    #lineare Extrapolation der Fließkurve
-    fit = np.polyfit(crv[-2:,0],crv[-2:,1],1)
-    x = 20
-    line = np.poly1d(fit)
-    y = line(x)
-    crv = np.vstack([crv, [x,y]])
 
 
     yval = np.interp(xval, crv[:,0], crv[:,1])
