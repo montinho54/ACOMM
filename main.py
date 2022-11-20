@@ -8,8 +8,6 @@ import mat
 import Force as force
 
 
-#material = "T45"
-material = "T65"
 
 #Laden der Validierungssimulaitonen
 MZ_T45_gesperrt = r"MZ_t45_lc_mit_setzen_1800el_gesperrt"
@@ -25,8 +23,9 @@ rechteck_T65_gesperrt = r"rechteck_t65_lc_mit_setzen_1800el_gesperrt"
 rechteck_T65_offen = r"rechteck_t65_lc_mit_setzen_1800el_offen"
 
 
-pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + MZ_T65_offen)
-titel = "MZ_T65_offen"
+pfad = os.path.abspath(os.getcwd()+ "/../Simulations/" + rechteck_T45_gesperrt)
+titel = "rechteckige Zugprobe (T45) nicht zwängungsfrei gelagert"
+
 
 
 
@@ -298,10 +297,15 @@ def calc_first_principle_value(vector):
     
 u= force.displacement(node_coordinates,node_displacement,boundary = displacement_dir)
 correct_force = np.array(binout.read("bndout","velocity","nodes",displacement_dir+"_total"))*1000 #F
-E_start = 1*1000 #korrekt: 2.45 Gpa
+E_start = 500 #korrekt: 2.45 Gpa
 nu_start = 0.45 #korrekt: 0.38
 x = np.array([E_start,nu_start])
 volume0 = mean_el_volumes[0]
+
+E_iter = []
+
+nu_iter = []
+
 
 i = 0
 """
@@ -325,8 +329,13 @@ while True:
 #2Dim Newton
 while True:
     F = np.zeros(2)
-    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 1)-F_x(strains,u,correct_force,volume0, 2450, 0.38,t = 1) #korrektur term ([E] = MPa, [F] = N) (Abweichung aufgrund des durchschnittlichen EL. vols)
-    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 2)-F_x(strains,u,correct_force,volume0, 2450, 0.38,t = 2)
+    #T65 E: 2.45 nu: 0.38, sigy:   0.0377, rho: 1.13000E-6
+    #T45 E: 2.1 nu: 0.38, sigy: 0.0249813 , rho : 1.1000E-6
+    F[0] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 1)-F_x(strains,u,correct_force,volume0, 2100, 0.38,t = 1) #korrektur term ([E] = MPa, [F] = N) (Abweichung aufgrund des durchschnittlichen EL. vols)
+    F[1] = F_x(strains,u,correct_force,volume0, x[0], x[1],t = 2)-F_x(strains,u,correct_force,volume0, 2100, 0.38,t = 2)
+    
+    E_iter.append(x[0]/1000)
+    nu_iter.append(x[1])
     
     J = np.zeros([2,2])
     J[0,0] = dF_dE(strains,volume0,x[0],x[1],1)
@@ -343,6 +352,21 @@ while True:
     i = i + 1
     if abs(max(F)) < 0.0000001:
         break
+
+
+fig,ax = plt.subplots(figsize=(10, 5))
+ax.plot(E_iter,linestyle = "solid", linewidth = 4, color = "k",label = "E-Modul")
+ax.hlines(2.45,0,len(E_iter)-1, color = "k", linestyle = "dashed")
+ax.plot(nu_iter,linestyle = "solid", linewidth = 4, color = "g", label = r"$\nu$")
+ax.hlines(0.38,0,len(E_iter)-1, color = "g", linestyle = "dashed")
+
+ax.set_xlabel("Iteration",fontsize = 14)
+ax.set_xticks(np.arange(len(E_iter)))
+ax.grid()
+ax.legend(fontsize = 12,loc = "center right")
+ax.tick_params(axis='both', which='major', labelsize=14)
+ax.tick_params(axis='both', which='minor', labelsize=8)
+
 
 E = x[0]
 nu = x[1]
@@ -376,17 +400,21 @@ it_cy = np.concatenate((np.append(plastic_strain,1).reshape([-1,1]),np.append(si
 
 
 fig,ax = plt.subplots(figsize=(8, 8))
-ax.plot(plastic_strain, sig_y, label = "calculated", linestyle = "solid", linewidth = 2, color = "k")
-ax.plot(plastic_strain, sig_y_savgol, label = "filtered (win_len: 21, order: 1)", linestyle = "dashed", linewidth = 2, color = "b")
+ax.plot(plastic_strain, sig_y, label = "Approximation", linestyle = "solid", linewidth = 4, color = "k")
+ax.plot(plastic_strain, sig_y_savgol, label = "geglättete Approximation", linestyle = "dashed", linewidth = 4, color = "b")
 #ax.plot(it_cy[:,0], it_cy[:,1], label = "constantly extrapolated", linestyle = "dashed", linewidth = 2, color = "r")
-ax.plot(cy[:100,0],cy[:100,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
-#ax.plot(cy[:938,0],1000*cy[:938,1], label = "correct", linestyle = "solid", linewidth = 2, color = "g")
-ax.legend(loc = "lower right")
+#ax.plot(cy[:100,0],cy[:100,1], label = "korrekte Fließkurve", linestyle = "solid", linewidth = 4, color = "g")
+ax.plot(cy[:938,0],1000*cy[:938,1], label = "korrekte Fließkurve", linestyle = "solid", linewidth = 2, color = "g")
+ax.legend(loc = "lower right",fontsize = 12)
 ax.grid(visible = True)
 ax.set_ylim(bottom = 0)
-ax.set_xlabel("$\epsilon_{p}$ [-]")
-ax.set_ylabel("$\sigma_{y}$ [MPa] ")
-ax.set_title(titel)
+ax.set_xlabel("$\epsilon_{p}$ [-]",fontsize = 14)
+ax.set_ylabel("$\sigma_{y}$ [MPa] ",fontsize = 14)
+ax.tick_params(axis='both', which='major', labelsize=14)
+ax.tick_params(axis='both', which='minor', labelsize=8)
+
+ax.set_title(titel,fontsize = 14)
+
 
 """
 ###################################
